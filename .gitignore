@@ -2,3 +2,6 @@
 *.suo
 *.idea
 _ReSharper*
+bin
+obj
+packages
