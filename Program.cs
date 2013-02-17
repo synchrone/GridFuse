@@ -18,7 +18,7 @@ namespace GridFS
 
             gfs.FindFiles(@"C:\Uploads", new ArrayList(), null);
 
-            return; //still baby steps
+            //return; //still baby steps
 
             var opt = new DokanOptions{
 #if DEBUG

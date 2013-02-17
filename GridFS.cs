@@ -11,6 +11,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Builders;
 using MongoDB.Driver.GridFS;
+using MongoDB.Driver.Wrappers;
 
 namespace GridFS
 {
@@ -116,17 +117,12 @@ namespace GridFS
             var matchingFiles = gridFS.Find(
                 Query.Matches("filename", new BsonRegularExpression(regex, "i"))
             );
-            if(matchingFiles.Any())
+            foreach (var fsFileInfo in matchingFiles)
             {
-                foreach (var fsFileInfo in matchingFiles)
-                {
-                    files.Add(fsFileInfo.GetFileInformation());
-                }
-                return 0;
-            }else
-            {
-                return -1;
+                files.Add(fsFileInfo.GetFileInformation());
             }
+            return 0;
+            
         }
 
         public int SetFileAttributes(string filename, FileAttributes attr, DokanFileInfo info)
