@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Specialized;
 using System.Configuration;
 using Dokan;
 
@@ -7,28 +8,29 @@ namespace GridFS
 {
     class Program
     {
+        private static NameValueCollection Settings
+        {
+            get { return ConfigurationSettings.AppSettings; }
+        }
+
         static void Main(string[] args)
         {
-            var settings = ConfigurationSettings.AppSettings;
-
+            Console.WriteLine("Connecting to GridFS");
             var gfs = new GridFS(
-                settings["MongoDBConnectionString"], 
-                settings["GridFSDB"]
+                Settings["MongoDBConnectionString"],
+                Settings["GridFSDB"]
             );
-
-            gfs.FindFiles(@"C:\Uploads", new ArrayList(), null);
-
-            //return; //still baby steps
 
             var opt = new DokanOptions{
 #if DEBUG
                 DebugMode = true,
 #endif
-                MountPoint = settings["MountPoint"],
-                ThreadCount = 5,
+                MountPoint = Settings["MountPoint"],
+                ThreadCount = 1,
 
             };
-
+            Console.WriteLine("Mounting {0}",Settings["MountPoint"]);
+            AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
             var status = DokanNet.DokanMain(opt, gfs);
             switch (status)
             {
@@ -55,6 +57,10 @@ namespace GridFS
                     break;
 
             }
+        }
+        static void CurrentDomain_ProcessExit(object sender, EventArgs e)
+        {
+            DokanNet.DokanUnmount(Settings["MountPoint"].ToCharArray()[0]);
         }
     }
 }
