@@ -1,0 +1,10 @@
+﻿This is MongoDB Grid FS filesystem driver for Windows
+* It is currently an early prototype
+* It is written using currently not-so-active Dokan wrapper library, so don't expect lightspeed fast performance
+* Do, however, expect BSODs, data corruption, all sorts of stuff
+* It is currently hardcoded to work with Windows-notation path separator (backslash)
+* Due to DokanNet library being too C++ to my taste, a full rewrite of this proof-of-concept (maybe even DokanNet itself) is necessary to implement write operations, let alone performance and stability optimizations
+
+Installation:
+* Install Dokan 0.6.0 (http://dokan-dev.net/wp-content/uploads/DokanInstall_0.6.0.exe), use Compatibility with Windows7 in case you are running Windows8
+* Edit app.config to reflect your Mongo connection info, mount point and prefix path

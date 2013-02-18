@@ -54,6 +54,7 @@
     <Compile Include="GridFS.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <None Include="README" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

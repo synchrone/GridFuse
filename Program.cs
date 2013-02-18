@@ -1,24 +1,24 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Specialized;
 using System.Configuration;
 using Dokan;
 
-namespace GridFS
+namespace GridFuse
 {
     class Program
     {
         private static NameValueCollection Settings
         {
-            get { return ConfigurationSettings.AppSettings; }
+            get { return ConfigurationManager.AppSettings; }
         }
 
-        static void Main(string[] args)
+        static void Main()
         {
             Console.WriteLine("Connecting to GridFS");
-            var gfs = new GridFS(
+            var gfs = new GridFs(
                 Settings["MongoDBConnectionString"],
-                Settings["GridFSDB"]
+                Settings["GridFSDB"],
+                Settings["PrefixPath"]
             );
 
             var opt = new DokanOptions{
@@ -30,8 +30,10 @@ namespace GridFS
 
             };
             Console.WriteLine("Mounting {0}",Settings["MountPoint"]);
-            AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
+            AppDomain.CurrentDomain.ProcessExit += CurrentDomainProcessExit;
             var status = DokanNet.DokanMain(opt, gfs);
+            gfs.Dispose();
+
             switch (status)
             {
                 case DokanNet.DOKAN_DRIVE_LETTER_ERROR:
@@ -53,12 +55,12 @@ namespace GridFS
                     Console.WriteLine("Success");
                     break;
                 default:
-                    Console.WriteLine("Unknown status: %d", status);
+                    Console.WriteLine("Unknown status: {0}", status);
                     break;
 
             }
         }
-        static void CurrentDomain_ProcessExit(object sender, EventArgs e)
+        static void CurrentDomainProcessExit(object sender, EventArgs e)
         {
             DokanNet.DokanUnmount(Settings["MountPoint"].ToCharArray()[0]);
         }

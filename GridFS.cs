@@ -1,33 +1,31 @@
 ﻿using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 using Dokan;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Builders;
 using MongoDB.Driver.GridFS;
-using MongoDB.Driver.Wrappers;
 
-namespace GridFS
+namespace GridFuse
 {
-    class GridFS : DokanOperations, IDisposable
+    class GridFs : DokanOperations, IDisposable
     {
-        private int count_ = 1;
+        //private int count_ = 1; // Dokan Context should be maintained across method calls to comply with multithreading
         private readonly IDisposable _disposableStartResult;
-        protected readonly MongoGridFS gridFS;
+        private readonly string _prefixPath = String.Empty;
+        private readonly MongoGridFS _gridFs;
 
-        public GridFS(string mongoDbConnectionString, string dbName)
+        public GridFs(string mongoDbConnectionString, string dbName, string prefixPath)
         {
+            _prefixPath = prefixPath;
             var mongoClient = new MongoClient(mongoDbConnectionString);
             var mongoServer = mongoClient.GetServer();
             var mongoDatabase = mongoServer.GetDatabase(dbName);
             _disposableStartResult = mongoServer.RequestStart(mongoDatabase);
-            gridFS = mongoDatabase.GridFS;
+            _gridFs = mongoDatabase.GridFS;
         }
 
         public void Dispose()
@@ -37,30 +35,32 @@ namespace GridFS
 
         protected string GetPath(string path)
         {
-            return Path.Combine(@"C:\",path.TrimStart('\\'));
+            return Path.Combine(_prefixPath, path.TrimStart('\\'));
         }
 
         public int CreateFile(string filename, FileAccess access, FileShare share, FileMode mode, FileOptions options, DokanFileInfo info)
         {
             Trace.TraceInformation("CreateFile: {0}", filename);
-            return gridFS.FindFileOrDir(GetPath(filename)) != null ? 0 : -DokanNet.ERROR_FILE_NOT_FOUND;
+            return _gridFs.FindFileOrDir(GetPath(filename)) != null ? 0 : -DokanNet.ERROR_FILE_NOT_FOUND;
         }
 
         public int OpenDirectory(string filename, DokanFileInfo info)
         {
             Trace.TraceInformation("OpenDirectory: {0}", filename);
-            info.Context = count_++;
-            if (filename == "\\")
-            {
-                return 0;
-            }
-            return -DokanNet.ERROR_PATH_NOT_FOUND;
+            return CreateFile(filename, FileAccess.Read, FileShare.ReadWrite, FileMode.Open, FileOptions.None, info);
         }
 
         public int ReadFile(string filename, byte[] buffer, ref uint readBytes, long offset, DokanFileInfo info)
         {
             Trace.TraceInformation("ReadFile: {0}", filename);
-            var file = gridFS.FindOne(GetPath(filename));
+
+            var file = _gridFs.FindOne(GetPath(filename));
+            if(file == null)
+            {
+                Trace.TraceWarning("File {0} was not found",filename);
+                return -1;
+            }
+
             try
             {
                 using(var fs = file.OpenRead())
@@ -79,17 +79,17 @@ namespace GridFS
         public int GetFileInformation(string filename, FileInformation fileinfo, DokanFileInfo info)
         {
             Trace.TraceInformation("GetFileInformation: {0}", filename);
-            if (filename == "\\")
-            {
-                fileinfo.Length = 0;
-                fileinfo.Attributes = FileAttributes.Directory;
-                fileinfo.CreationTime = fileinfo.LastAccessTime =  fileinfo.LastWriteTime = DateTime.Now;
-                return 0;
-            }
-            var file = gridFS.FindOne(GetPath(filename));
+            filename = GetPath(filename);
+            var file = _gridFs.FindOne(filename);
             if(file != null)
             {
                 file.UpdateFileInformation(ref fileinfo);
+                return 0;
+            }
+            var probablyDir = _gridFs.FindFileOrDir(filename);
+            if (probablyDir != null)
+            {
+                probablyDir.CloneTo(ref fileinfo);
                 return 0;
             }
             return -1;
@@ -98,10 +98,10 @@ namespace GridFS
         public int FindFiles(string filename, ArrayList files, DokanFileInfo info)
         {
             Trace.TraceInformation("FindFiles: {0}",filename);
-            filename = GetPath(filename);
+            filename = GetPath(filename).TrimEnd('\\')+"\\";
 
             var regex = String.Format(@"{0}[^\\]+\\?(?=.*)$", Regex.Escape(filename));
-            var matchingFiles = gridFS.Find(
+            var matchingFiles = _gridFs.Find(
                 Query.Matches("filename", new BsonRegularExpression(regex, "i"))
             );
 
@@ -109,13 +109,30 @@ namespace GridFS
             {
                 files.Add(fsFileInfo.GetFileInformation());
             }
+            var directoryNames = _gridFs.Files.MapReduce(
+                String.Format(
+                @"var match = /^{0}([^\\]+)\\/i.exec(this.filename);", Regex.Escape(filename))+
+                @"if(match != null && match.length > 1){
+                        emit(match[1],this._id);
+                    }
+                ",
+                 "function(){}",
+                 new MapReduceOptionsBuilder()
+                    .SetFinalize("function(key,values){return key;}")
+                    .SetOutput(new MapReduceOutput("GridDirectories"))
+             );
+
+            foreach (var matchingDirectory in directoryNames.GetResults())
+            {
+                files.Add(Extensions.NewDirectory(matchingDirectory.GetValue("value").AsString));
+            }
             return 0;
         }
 
         public int GetDiskFreeSpace(ref ulong freeBytesAvailable, ref ulong totalBytes, ref ulong totalFreeBytes, DokanFileInfo info)
         {
             freeBytesAvailable = 500000000;
-            totalBytes = (ulong)gridFS.Database.GetStats().DataSize + (freeBytesAvailable*2);
+            totalBytes = (ulong)_gridFs.Database.GetStats().DataSize + (freeBytesAvailable*2);
             totalFreeBytes = freeBytesAvailable;
             return 0;
         }
@@ -200,6 +217,7 @@ namespace GridFS
         #endregion
 
     }
+
     public static class Extensions
     {
         public static void UpdateFileInformation(this MongoGridFSFileInfo file, ref FileInformation dokanFileInformation)
@@ -209,12 +227,22 @@ namespace GridFS
             dokanFileInformation.Attributes = FileAttributes.ReadOnly;
             dokanFileInformation.LastAccessTime = DateTime.Now;
             dokanFileInformation.LastWriteTime = DateTime.Now;
+            dokanFileInformation.FileName = Path.GetFileName(file.Name);
         }
         public static FileInformation GetFileInformation(this MongoGridFSFileInfo that)
         {
             var finfo = new FileInformation();
             that.UpdateFileInformation(ref finfo);
             return finfo;
+        }
+        public static void CloneTo(this FileInformation that, ref FileInformation target)
+        {
+            target.Attributes = that.Attributes;
+            target.FileName = that.FileName;
+            target.Length = that.Length;
+            target.LastAccessTime = that.LastAccessTime;
+            target.LastWriteTime = that.LastWriteTime;
+            target.CreationTime = that.CreationTime;
         }
 
         public static FileInformation FindFileOrDir(this MongoGridFS that, string filename)
@@ -226,20 +254,25 @@ namespace GridFS
             }
             
             // okay, we should search for a directory
-            var containingDir = Path.GetDirectoryName(filename);
-            var childCount = that.Files.Count(Query.Matches("filename", String.Format("/^{0}",containingDir)));
+            var childCount = that.Files.Count(Query.Matches("filename", String.Format(@"/^{0}\\.+/", Regex.Escape(filename.TrimEnd('\\')))));
             if(childCount > 0)
             {
-                return new FileInformation{
-                    Attributes = FileAttributes.Directory,
-                    CreationTime = DateTime.Now,
-                    LastAccessTime = DateTime.Now,
-                    LastWriteTime = DateTime.Now,
-                    FileName = Path.GetFileName(filename),
-                    Length = 0
-                };
+                return NewDirectory(Path.GetFileName(filename));
             }
             return null;
+        }
+
+        public static FileInformation NewDirectory(string name)
+        {
+            return new FileInformation
+            {
+                Attributes = FileAttributes.Directory,
+                CreationTime = DateTime.Now,
+                LastAccessTime = DateTime.Now,
+                LastWriteTime = DateTime.Now,
+                FileName = name,
+                Length = 0
+            };
         }
     }
 }
